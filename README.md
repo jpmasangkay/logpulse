@@ -1,77 +1,145 @@
-# logpulse
+# 📡 LogPulse
+[![Ask DeepWiki](https://devin.ai/assets/askdeepwiki.png)](https://deepwiki.com/jpmasangkay/logpulse)
 
-`logpulse` is a terminal log tailer and host/process monitor with live filtering, structured JSON inspection, and a 60-second rate/CPU sparkline. It is written in Rust using `ratatui`, `crossterm`, and `sysinfo` on top of standard OS threads and `std::sync::mpsc`.
+### Real-Time Terminal UI for Log Exploration & System Monitoring — Pure Rust
 
-<!-- TODO: drop docs/demo.gif or docs/screenshot.png here -->
+**Tail. Filter. Monitor. Pure Rust.**
 
-## Why I Built This
+A crisp, responsive terminal UI for real-time log exploration and live host/process monitoring built entirely in Rust. Features background-threaded log ingestion over `std::sync::mpsc` (`<FILE>` tailing with 256 KB seek, rotation/truncation detection, and partial-line buffering, `--demo` weighted traffic generator, and `--system` live macOS Unified Log streaming with cross-platform `sysinfo` fallback), structured JSON and plain-text parsing, live case-insensitive search and severity chip filtering, ID-anchored selection when paused, scrollable JSON/process inspection popups, and a live system dashboard tracking CPU, RAM, swap, primary disk, network throughput, 60-second sparklines, and sortable processes.
 
-When debugging services locally, I kept switching between `tail -f | jq`, `grep`, and `htop` across terminal splits just to check whether an error burst lined up with a CPU or memory spike. I wanted a single binary that opens directly on a log file, synthetic traffic, or live host telemetry without leaving the terminal or maintaining separate filter pipelines. Bounding history to 10,000 buffered entries and sampling host metrics once per second keeps memory predictable during long sessions while letting me pause, hold selection on a single log ID, and inspect nested JSON payloads in place.
+[![Rust](https://img.shields.io/badge/Rust-1.95+-DEA584?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Edition](https://img.shields.io/badge/Edition-2021-blue?style=for-the-badge)](https://www.rust-lang.org)
+[![ratatui](https://img.shields.io/badge/ratatui-0.30.2-00ADD8?style=for-the-badge)](https://ratatui.rs)
+[![crossterm](https://img.shields.io/badge/crossterm-0.29.0-333333?style=for-the-badge)](https://github.com/crossterm-rs/crossterm)
+[![sysinfo](https://img.shields.io/badge/sysinfo-0.40.3-4E8EE9?style=for-the-badge)](https://github.com/GuillaumeGomez/sysinfo)
+[![clap](https://img.shields.io/badge/clap-4.6.8-orange?style=for-the-badge)](https://github.com/clap-rs/clap)
 
-## Quick Start
+🖥️ **Repository:** [github.com/jpmasangkay/logpulse](https://github.com/jpmasangkay/logpulse)
+
+---
+
+## ✨ Features
+
+### 📜 Real-Time Log Ingestion & Parsing
+
+- **Resilient file tailer (`<FILE>`)** — validates file existence and readability before entering raw mode, seeks roughly the last 256 KB on startup (skipping the initial partial line), polls every ~100 ms for new bytes, buffers incomplete lines until a newline arrives, resets automatically on file truncation or rotation, and decodes non-UTF-8 sequences via `String::from_utf8_lossy`.
+- **Structured JSON & plain-text parser** — extracts severity from `level` / `severity` / `lvl` (plus macOS `messageType`), message from `msg` / `message` (plus macOS `eventMessage` with `processImagePath` tags), and timestamps from `timestamp` / `time` / `ts` (RFC 3339, Unix seconds/milliseconds, or `HH:MM:SS`). Plain-text lines detect `ERROR`/`ERR`, `WARN`/`WARNING`, `INFO`, and `DEBUG`/`TRACE` case-insensitively and default to `Info` / current local time.
+- **Built-in `--demo` generator** — emits weighted log levels (~60% `INFO`, 20% `DEBUG`, 13% `WARN`, 7% `ERROR`) with ~30% structured JSON and ~70% plain-text lines across multiple fake services with request IDs and random traffic bursts so the 60-second sparkline comes alive.
+- **Direct `--system` mode** — launches into the live host/process monitor while streaming macOS Unified Logs (`/usr/bin/log stream --style ndjson --level info`) in the background, with automatic `sysinfo` telemetry fallback on non-macOS or sandboxed environments.
+
+### 🔍 Interactive Filtering, Search & Inspection
+
+- **Real-time `/` search** — filters logs (case-insensitive substring match over the raw line) or processes (by name or PID) on every keystroke, displaying live `matched/total` counts and terminal cursor positioning.
+- **Severity filter chips (`1`–`4`)** — toggle `ERROR`, `WARN`, `INFO`, and `DEBUG` visibility independently with color-coded chips in the bottom bar.
+- **Pause & ID-anchored scrolling** — `Space` pauses live follow (scrolling up also pauses automatically; `G` resumes). Incoming lines continue ingesting and incrementing totals while the viewport and selection remain anchored to the selected entry `id` (or `pid` in the process table).
+- **Centered detail popup (`Enter`)** — clears the underlying area with `Clear`, wraps long text cleanly, and renders full raw log lines plus pretty-printed JSON (or full executable paths, memory, and CPU metrics for processes) with `j`/`k` scrolling.
+
+### 📊 Live System & Process Monitoring
+
+- **1-second host telemetry tick** — monitors global CPU usage (`Gauge`), physical RAM (`used / total GB` and percentage `Gauge`), swap usage, primary disk utilization, 1/5/15m load averages, uptime, and non-loopback network `Rx`/`Tx` byte rates via `sysinfo`.
+- **60-second rolling sparkline** — plots `Logs/s` (current and peak rate) in the `Logs` view and `CPU%` history in the `Processes` view.
+- **Interactive process table (`Tab`)** — switch between `Logs` and `Processes` in any mode (`--system`, `--demo`, or `<FILE>`), sort live processes by `CPU%` (`c`) or `MEM` (`m`), filter by name/PID, and inspect process details.
+
+### 🛡️ Terminal Safety & Responsive Layout
+
+- **Panic-safe terminal lifecycle** — uses `ratatui::try_init()` and `ratatui::restore()` to manage raw mode, alternate screen, and panic hooks cleanly on normal exit, error exit, `Ctrl+C`, or panic.
+- **Adaptive layout** — 75/25 split with rounded borders, severity background chips, compact layout adaptation below 20 rows, and a friendly `"Terminal too small"` guard below `60×16`.
+
+---
+
+## 🛠️ Tech Stack & Source Layout
+
+| Component / Crate | Purpose |
+|-------------------|---------|
+| **[src/main.rs](src/main.rs)** | `clap` CLI parsing (`<FILE>`, `--demo`, `--system`), pre-TUI file validation, terminal init/restore, and 50 ms `crossterm` event loop |
+| **[src/app.rs](src/app.rs)** | Application state, `VecDeque` 10,000-entry ring buffer, JSON & plain-text parsers, file tailer, demo generator, `--system` streamer, and `sysinfo` polling |
+| **[src/ui.rs](src/ui.rs)** | All `ratatui` layout and widget rendering (`Table`, `Gauge`, `Sparkline`, `Paragraph`, `Clear` popups, and compact/small-terminal guards) |
+| **Rust 2021 Edition (1.95+)** | Memory-safe systems programming with owned types (`String`, `Vec`, `VecDeque`) and `anyhow` error propagation |
+| **ratatui `0.30.2`** | Terminal UI framework powering the layout, stateful tables, gauges, sparklines, and overlays |
+| **crossterm `0.29.0`** | Cross-platform terminal raw mode, alternate screen, resize, and `KeyEventKind::Press` input handling |
+| **sysinfo `0.40.3`** | Cross-platform CPU, RAM, swap, disk, network, load average, and process metrics |
+| **clap `4.6.8` (`derive`)** | Declarative CLI argument parsing with mutually exclusive required source group |
+| **serde `1.0.229` & serde_json `1.0.154`** | JSON log deserialization and pretty-printed detail inspection |
+| **chrono `0.4.45`** | RFC 3339, Unix epoch, and local timestamp parsing and formatting |
+| **rand `0.9.5`** | Weighted log level, service, latency, and burst timing generation in `--demo` mode |
+| **anyhow `1.0.104`** | Ergonomic contextual error handling across CLI and terminal setup |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- [Rust SDK](https://rustup.rs/) (1.95 or later with `cargo` and `clippy`)
+- macOS, Linux, or Windows terminal (minimum `60×16` recommended)
+
+### Installation & Verification
 
 ```bash
+# Clone the repository
+git clone https://github.com/jpmasangkay/logpulse.git
+cd logpulse
+
+# Build the release binary
 cargo build --release
+
+# Run unit tests and Clippy lints
 cargo test
 cargo clippy --all-targets -- -D warnings
-
-cargo run --release -- /var/log/app.log
-cargo run --release -- --system
-cargo run --release -- --demo
 ```
 
-<details>
-<summary>Platform notes, JSON fields, and terminal constraints</summary>
+### Running LogPulse
 
-- `--system` streams macOS Unified Logs via `/usr/bin/log stream --style ndjson --level info`. Where `/usr/bin/log` is missing or exits early (Linux, Windows, or restricted sandboxes), `logpulse` switches to emitting `sysinfo` JSON host/top-process snapshots every 2 seconds while keeping the `Processes` tab live.
-- JSON lines inspect `level`/`severity`/`lvl`/`messageType`, `msg`/`message`/`eventMessage` (with `processImagePath` tags for Unified Logs), and `timestamp`/`time`/`ts` (RFC 3339, Unix seconds/milliseconds, or `HH:MM:SS`). Plain-text lines match `ERROR`/`WARN`/`INFO`/`DEBUG` tokens case-insensitively and default to `INFO` at local arrival time.
-- Requires at least a `60x16` terminal (`< 20` rows triggers compact layout; smaller viewports render a resize prompt).
+```bash
+# Monitor your machine live (processes, CPU/RAM/disk/network, and system logs)
+cargo run -- --system
 
-</details>
+# Run with the built-in simulated traffic generator
+cargo run -- --demo
 
-## Measured Numbers
-
-Measured locally on Apple A18 Pro (6 cores, 8 GiB RAM), macOS 27.2.1 (26B131), `rustc 1.100.0`:
-
-```text
-release binary (target/release/logpulse)   2,131,120 bytes (2.0M)
-source footprint (Cargo.toml + src/*.rs)   3,213 lines
-cargo test --release                       5 passed, 0 failed, 0 ignored (0.04s)
-cargo clippy --all-targets -- -D warnings  0 warnings
-cold start to first PTY frame (120x40)     27.1 ms (--system, 11.8 MiB RSS)
-                                           34.5 ms (--demo, 11.3 MiB RSS)
-10,000-line tail burst (721,890 bytes)     163.7 ms append-to-render (includes 100 ms poll), 22.7 MiB RSS
+# Tail a real log file (supports plain text, JSON/NDJSON, truncation, and rotation)
+cargo run -- /path/to/app.log
 ```
 
-## Architecture & Trade-offs
+---
 
-Each input mode (`<FILE>`, `--demo`, or `--system`) spawns one background `std::thread` pushing parsed lines over an unbounded `std::sync::mpsc` channel, while the main thread polls `crossterm` input every 50 ms and refreshes host metrics once per second. Skipping an async runtime keeps the release binary at 2.0M and the event loop synchronous, at the cost of fixed polling intervals (100 ms in the file tailer, 50 ms UI drain) and no channel backpressure if a writer outpaces the main thread.
+## ⌨️ Controls
 
-Buffered history lives in an in-memory `VecDeque` capped at `10,000` entries, and opening an existing file seeks back `256 KiB` from EOF and drops the leading partial line. Avoiding a disk index keeps memory bounded near 23 MiB at full capacity, though entries older than the buffer window or before the initial `256 KiB` offset cannot be scrolled back.
+### Global & Navigation
 
-When new entries arrive or the search/severity filters change, `drain_incoming` scans the buffer to rebuild the filtered index list, and `render_log_table` allocates table rows across all matched indices. While paused (`Space` or scrolling up), navigation tracks the selected item ID (or process PID) instead of visual row offset so ring-buffer evictions do not shift what you are reading. Full-buffer scans and row allocations are less optimal than incremental indices or viewport-only slicing, but keep state management simple within the 10,000-entry limit.
+| Action | Shortcut |
+|--------|----------|
+| **Switch Logs / Processes Tab** | `Tab` |
+| **Enter Filter / Search Mode** | `/` |
+| **Move Selection Down / Up** | `j` / `k` or `Down` / `Up` |
+| **Page Down / Page Up** | `PageDown` / `PageUp` |
+| **Jump to Top (pauses in Logs)** | `g` |
+| **Jump to Bottom (resumes `● LIVE` in Logs)** | `G` |
+| **Pause / Resume Updates** | `Space` |
+| **Inspect Selected Entry / Process** | `Enter` |
+| **Quit** | `q` or `Ctrl+C` |
 
-Host and process telemetry are initialized upfront in `App::new` regardless of CLI flag so switching tabs with `Tab` populates `Processes` immediately, with per-process `CPU%` starting at `0.0` until the first 1 s sample delta completes. Disk utilization inspects only `/` (or the first enumerated volume) to prevent macOS APFS container double-counting, and `--system` wraps `/usr/bin/log` with a `sysinfo` JSON snapshot fallback instead of integrating native `journald` or Windows Event Log APIs.
+### View-Specific, Search & Popup
 
-## Known Limits & Rough Edges
+| Context | Action | Shortcut |
+|---------|--------|----------|
+| **Logs View** | Toggle `ERROR` / `WARN` / `INFO` / `DEBUG` | `1` / `2` / `3` / `4` |
+| **Processes View** | Sort by `CPU%` / `Memory` | `c` / `m` |
+| **Search Mode** | Type / edit query | Characters, `Backspace` |
+| **Search Mode** | Confirm filter / clear & exit | `Enter` / `Esc` |
+| **Detail Popup** | Scroll content | `j` / `k`, `Up` / `Down`, `PageUp` / `PageDown`, `g` / `G` |
+| **Detail Popup** | Close popup | `Esc` or `Enter` |
 
-- History stops at 10,000 buffered entries in memory; there is no disk-backed scrollback once lines are evicted or before the startup 256 KiB seek.
-- The file tailer polls `metadata().len()` every 100 ms rather than watching filesystem events and only resets to byte `0` when a file shrinks (`len < pos`), so an in-place replacement with an equal-or-larger file goes undetected.
-- Live OS log streaming relies on `/usr/bin/log` on macOS; non-macOS hosts only receive 2-second `sysinfo` host snapshots in the `Logs` tab under `--system`.
-- Only the primary mount (`/`) is measured in the disk gauge, and both pause state (`paused`) and the `/` search string carry across `Logs` and `Processes` instead of staying scoped per tab.
-- Runtime behavior and unit tests (`cargo test`) have only been executed on macOS `arm64`; Linux and Windows behavior relies on `crossterm` and `sysinfo` without direct verification on those OSes.
+---
 
-## Controls
+## 👥 Author
 
-| Key | Scope | Action |
-|-----|-------|--------|
-| `Tab` | Global | Switch between `Logs` and `Processes` |
-| `/` | Global | Edit search filter (`Enter` keeps filter, `Esc` clears) |
-| `1`-`4` | Logs | Toggle `ERROR`, `WARN`, `INFO`, `DEBUG` visibility |
-| `c` / `m` | Processes | Sort table by `CPU%` or `Memory` |
-| `j` / `k`, `Up` / `Down` | List / Popup | Move selection or scroll detail popup |
-| `PageUp` / `PageDown` | List / Popup | Scroll by page |
-| `g` / `G` | List / Popup | Jump to top (pauses in Logs) or bottom (resumes live in Logs) |
-| `Space` | Global | Pause or resume live updates |
-| `Enter` | List / Popup | Open or close inspection popup |
-| `q` / `Ctrl+C` | Global | Exit cleanly |
+Built with ❤️ by **John Paul Masangkay** ([@jpmasangkay](https://github.com/jpmasangkay))
+
+---
+
+## 👏 Acknowledgements
+
+- **Ratatui & Crossterm maintainers** — For a fast, ergonomic Rust terminal UI ecosystem
+- **Guillaume Gomez (`sysinfo`)** — For cross-platform host and process telemetry in pure Rust
+- **The Rust Community** — For `clap`, `serde`, `serde_json`, `chrono`, `rand`, and `anyhow`
